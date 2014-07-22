@@ -16,6 +16,7 @@
   "dependencies": {
     "send": "~0.2.0",
     "server-event": "~1.0.1",
-    "express": "~4.4.5"
+    "express": "~4.4.5",
+    "dotenv": "0.3.0"
   }
 }

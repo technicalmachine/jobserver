@@ -1,5 +1,7 @@
 assert = require 'assert'
 jobserver = require '../jobserver'
+fs = require('fs')
+path = require('path')
 
 describe 'blobStoreMem', ->
 	it 'stores and retrieves blobs', (next) ->
@@ -17,6 +19,56 @@ describe 'blobStoreMem', ->
 		b2 = s.putBlob(data)
 		assert.equal(b1.id, b2.id)
 		assert.equal(b1.data, b2.data)
+
+describe 'blobStoreLocal', ->
+	it 'creates the process env folder if none exists', ->
+		setupTestEnv()
+		s = new jobserver.BlobStoreLocal(process.env.LOCAL_STORE_TEST)
+		assert(fs.existsSync(process.env.LOCAL_STORE_TEST))
+
+	it 'stores and retrives blobs', (next) ->
+		data = new Buffer('asdfghjkl')
+		s = new jobserver.BlobStoreLocal(process.env.LOCAL_STORE_TEST)
+		put = s.putBlob(data)
+		assert.equal(put.meta.path.indexOf(process.env.LOCAL_STORE_TEST), 0)
+		s.getBlob put.id, (blob2) ->
+			assert.equal(put.meta.path, blob2.meta.path)
+			assert.equal(put.id, blob2.id)
+			next()
+
+	it 'loads all files on fs during construction', (next) ->
+		# create a bunch of test data
+		setupTestEnv()
+		s = new jobserver.BlobStoreLocal(process.env.LOCAL_STORE_TEST)
+		first = s.putBlob('123qweasd')
+		s.putBlob('123qweasd')
+		s.putBlob('123qweasd1')
+		s.putBlob('123qweasd2')
+		# should have 3 items
+		otherBlobStore = new jobserver.BlobStoreLocal(process.env.LOCAL_STORE_TEST)
+		assert.equal(Object.keys(otherBlobStore.blobs).length, 3)
+
+		#make sure that getblob calls can read files
+		s.getBlob first.id , (blobData) ->
+			assert.equal(blobData.cached.toString(), '123qweasd')
+			next()
+
+# sets up test fs area
+setupTestEnv = ->
+	process.env.LOCAL_STORE_TEST = path.join(__dirname, '/localstore')
+	deleteFolderRecursive = (currPath) ->
+		files = fs.readdirSync(currPath);
+		for file in files
+			do (file) ->
+				filePath = path.join(currPath, file)
+				if fs.lstatSync(filePath).isDirectory()
+					deleteFolderRecursive(filePath);
+				else
+					fs.unlinkSync(filePath)
+		fs.rmdirSync(currPath)
+
+	if fs.existsSync(process.env.LOCAL_STORE_TEST)
+		deleteFolderRecursive(process.env.LOCAL_STORE_TEST)
 
 # Takes a list of names and returns an object with methods with those names, which must be called in order
 orderingSpy = (events) ->

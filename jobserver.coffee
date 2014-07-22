@@ -1,6 +1,14 @@
 {EventEmitter} = require('events')
 {Transform} = require('stream')
 crypto = require('crypto')
+dotenv = require('dotenv')
+path = require('path')
+fs = require('fs')
+mkdirp = require('mkdirp')
+
+# do it this way so we can run from alternate path
+dotenv._getKeysAndValuesFromEnvFilePath(path.join(__dirname, '.env'));
+dotenv._setEnvs();
 
 BLOB_HMAC_KEY = 'adb97d77011182f0b6884f7a6d32280a'
 JOB_HMAC_KEY  = 'fb49246c50d78d460a5d666e943230fa'
@@ -61,7 +69,7 @@ STATES = [
 	getBlob: (id, cb) ->
 		throw new Error("Abstract method")
 	hash: (buffer) ->
-		crypto.createHmac('sha256', BLOB_HMAC_KEY).update(buffer).digest().toString('base64')
+		encodeURIComponent(crypto.createHmac('sha256', BLOB_HMAC_KEY).update(buffer).digest().toString('base64'))
 
 # An item in a BlobStore
 class Blob
@@ -224,6 +232,59 @@ class TeeStream extends Transform
 		v = @blobs[id]
 		setImmediate ->
 			cb(v)
+		return
+
+@BlobStoreLocal = class BlobStoreLocal extends BlobStore
+	constructor: (localStorePath) ->
+		@localStorePath = localStorePath
+		@blobs = {}
+		self = @
+		# check if temp file dir exists
+		if fs.existsSync(@localStorePath) and fs.statSync(@localStorePath).isDirectory()
+			# if it does, read the blobs from the temp path
+			# go 1 dirs down
+			appendFile = (readdir, steps) -> 
+				files = fs.readdirSync(readdir)
+				for file in files
+					do (file) ->
+						# check if its a dir
+						joinedPath = path.join(readdir, file)
+						if steps > 0 and fs.statSync(joinedPath).isDirectory()
+							appendFile(joinedPath, steps - 1)
+						else if !fs.statSync(joinedPath).isDirectory()
+							# filepath is stored in metadata
+							self.blobs[file] = new Blob(this, file, {path: joinedPath})
+
+			appendFile(@localStorePath, 1)
+
+		else
+			# make that directory
+			mkdirp.sync(@localStorePath)
+
+	putBlob: (buffer, meta) ->
+		# writes buffer to local filesystem
+		id = @hash(buffer)
+		if not @blobs[id]
+			# get first 2 char from id
+			folder = id.slice(0,2)
+			# check if folder exists
+			joinedPath = path.join(@localStorePath, folder)
+			if !fs.existsSync(joinedPath) or fs.statSync(@localStorePath).isDirectory()
+				fs.mkdirSync(joinedPath)
+
+			# write the buffer to joinedPath
+			joinedPath = path.join(joinedPath, id)
+			fs.writeFileSync(joinedPath, buffer)
+			@blobs[id] = new Blob(this, id, {path:joinedPath})
+		
+		@blobs[id]
+
+	getBlob: (id, cb) ->
+		blob = @blobs[id]
+		#read the file
+		blob = new Blob(this, blob.id, {path: blob.meta.path}, fs.readFileSync(blob.meta.path))
+		setImmediate ->
+			cb(blob)
 		return
 
 @JobStoreMem = class JobStoreMem extends JobStore
